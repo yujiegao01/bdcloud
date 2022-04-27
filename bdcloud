@@ -1,0 +1,773 @@
+#!/usr/bin/bash
+refreshToken='122.a0fd6522291c2aee7a74d365be787470.YH3nFT_Kufyc1KhVW57jrlqPdQssxxwOlKUyxNY.AYULUw'
+accessToken='121.873c6b01840d0a63b01fce6466a3503b.YmwVo_Mpb2sPVOlJtEilmx43bNK1JKsl0Zs32NQ.hsLu5A'
+
+#apt-get install -y zbarimg qrencode jq
+
+
+
+#appName=/apps/Yu 
+appName=
+scriptName="bdcloud"
+debug=0
+outfile=$(pwd)
+red='\e[0;41m' # 红色
+RED='\e[1;31m'
+green='\e[0;32m' # 绿色
+GREEN='\e[1;32m'
+yellow='\e[5;43m' # 黄色
+YELLOW='\e[1;33m'
+blue='\e[0;34m' # 蓝色
+BLUE='\e[1;34m'
+purple='\e[0;35m' # 紫色
+PURPLE='\e[1;35m'
+cyan='\e[4;36m' # 蓝绿色
+CYAN='\e[1;36m'
+WHITE='\e[1;37m' # 白色
+NC='\e[0m' # 没有颜色
+set -e;
+set -u;
+
+echo $accessToken;
+echo $refreshToken;
+#===============================================
+
+getDir(){
+if [ $# -eq 0 ];then
+	echo -e "${RED}需要一个参数! ${NC}" >&2
+	exit 1
+fi
+result=$(curl  -sLc ~/cookie.txt -b a1.txt  -X GET "https://pan.baidu.com/rest/2.0/xpan/file?method=list&dir=$1&order=time&web=0&folder=0&access_token=$accessToken&desc=1" -H 'User-Agent: pan.baidu.com' );
+#分页显示
+#result=$(curl  -sLc ~/cookie.txt -b a1.txt  -X GET "https://pan.baidu.com/rest/2.0/xpan/file?method=list&dir=$1&order=time&start=0&limit=10&web=0&folder=0&access_token=$accessToken&desc=1" -H 'User-Agent: pan.baidu.com' );
+errno=$(echo $result| jq -r .errno)
+if [ $errno -eq -9 ];then
+echo -e "${green}远程文件或目录不存在! ${errno} ${NC}" >&2 
+exit 1;
+fi
+echo $result
+}
+
+
+
+
+getDlink(){
+	echo $(curl  -sLc ~/cookie.txt -b a1.txt  -X GET "http://pan.baidu.com/rest/2.0/xpan/multimedia?method=filemetas&access_token=$accessToken&fsids=[$1]&thumb=0&dlink=1&extra=0" -H 'User-Agent: pan.baidu.com' | jq -r  .list[0].dlink);
+}
+count=0;
+downloadFolder(){
+	echo $1
+	count=$[$count+1]
+	echo $count
+local list=$(getDir $1 | jq  .list) ;
+local len=$(echo $list | jq '.|length');
+local i=0
+
+while true ;
+do
+	if [[ $i -eq $len ]];then
+		break;
+	fi
+ #for(( i=0;i<${#array[@]};i++)) do
+local	 filterObj=$(echo $list|jq  .[$i] |jq  '[.path,.fs_id,.isdir]')
+
+	local fpath=$(echo $filterObj|jq -r .[0])
+local	ffsid=$(echo $filterObj|jq .[1])
+local	fisdir=$(echo $filterObj|jq .[2])
+	if [[ 'null' =~ $fpath ]];then
+		 echo $len 
+	fi
+if [ $fisdir -eq 1 ];then
+
+	downloadFolder $fpath $count
+else
+
+	local	dlink=$(getDlink $ffsid); 
+	downloadFile $dlink $fpath 0;
+fi
+
+i=$[$i+1]
+done
+}
+
+
+downloadFile(){
+
+	local dir=$(echo $2 | grep -Eho "(/.*/)+")
+cd ${outfile}$dir|| mkdir -p ${outfile}$dir && cd ${outfile}$dir
+echo "下载路径: $(pwd)"
+if [[ $3 == 0 ]];then
+curl  -OJ# -Lc ~/cookie.txt -b a1.txt  -X GET "$1&access_token=$accessToken" -H 'User-Agent: pan.baidu.com' 
+else
+echo "$1&access_token=$accessToken" >&2
+fi
+}
+getBlockList(){
+	
+
+filepath=$1
+silepath=$1
+if [[ ! -f $filepath ]];then
+	return 1;
+
+fi
+filelen=$(wc -c $filepath | awk '{print $1}')
+
+fourM=$((1024*1024*4))
+lencount=$(($filelen/$fourM))
+stan=$(($filelen%$fourM))
+if (($stan!=0));then
+	let lencount+=1;
+fi
+
+ blockdata=0
+declare -i seek=0;
+
+        for((i=0;i<$lencount;i++));do
+
+        blockList[seek]=$(dd if=$filepath bs=4M  skip=$seek count=1 2>/dev/null | md5sum|awk '{print $1}')
+        seek=$((seek+1))
+done
+if ((seek==0));then
+        blockList[seek]=$(dd if=$filepath  bs=$filelen 2>/dev/null | md5sum|awk '{print $1}')
+fi
+#echo ${block_list[@]}
+return 0
+}
+
+
+slicePut(){
+
+sliceup(){
+if [[ $debug == 1 ]];then
+echo -e "${green}path: ${path} ${NC}" >&2
+echo -e "${green}partseq: ${partseq} ${NC}" >&2
+echo -e "${green}uploadid: ${uploadid} ${NC}" >&2
+fi
+aa=$(dd if=$dir bs=$1 skip=$2 count=1 2>/dev/null |curl   -s  -F 'file=@-' "https://d.pcs.baidu.com/rest/2.0/pcs/superfile2?access_token=${accessToken}&method=upload&type=tmpfile&path=${path}&uploadid=${uploadid}&partseq=${partseq}" )
+errno=$(echo $aa|jq -r '.errno')
+if [[ $errno != 'null' ]];then
+	return 1
+else
+	return 0
+fi
+
+}
+dir=$1
+path=$3
+uploadid=$2
+skip=0
+partseq=0
+bs=$((1024*1024*4))
+filelen=$(wc -c $dir|awk {'print $1'})
+fourM=$((1024*1024*4))
+lencount=$(($filelen/$fourM))
+stan=$(($filelen%$fourM))
+if (($stan!=0));then
+	let lencount+=1;
+fi
+
+for((i=0;i<$lencount;i++));do
+	partseq=$i
+	
+	errno1=$(sliceup $bs $skip)
+	if [[ $? != 0 ]];then
+		return $errno1
+	fi	
+	skip=$((skip+1))
+done
+if (($((filelen/1024/1024/4))==0));then
+	sliceup $filelen 0
+else
+
+echo 
+
+fi
+
+return 0
+#sliceup 1 $((filelen-skip*1024*1024*4)) 
+
+}
+
+
+#==============================================================
+createFile(){
+	
+path=$1
+dir=$2
+blockList=$3
+uploadid=$4
+rtype=2
+isdir=0
+size=1
+
+blockListJson=$(printf '%s\n' "${blockList[@]}" | jq -R . | jq -s  )
+if [[ -e $dir  ]] && [[  -f $dir ]];then
+size=0
+else
+	return 1;
+fi
+size=$(wc -c $dir|awk '{print $1}')
+
+ if (($debug==1));then
+echo -e "${green}rtype: ${rtype} ${NC}" >&2
+echo -e "$green isdir: ${isdir} ${NC}" >&2
+echo -e "${green}path: ${path} ${NC}" >&2
+echo -e "${green}size: ${size} ${NC}" >&2
+echo -e "${green}blockList: ${blockListJson[*]}" >&2
+echo -e "${green}uploadid: ${uploadid}" >&2
+ fi
+
+result=$(curl -s "https://pan.baidu.com/rest/2.0/xpan/file?method=create&access_token=$accessToken" -d "path=${path}&size=${size}&isdir=${isdir}&rtype=${rtype}&uploadid=${uploadid}&block_list=${blockListJson}" -H "User-Agent: pan.baidu.com") 
+errno=$(echo $result|jq -r '.errno')
+return $errno;
+}
+
+#============================================
+anticipatePut(){
+dir=$1
+path=$2
+blockList=$3
+#path="/apps/Yu/$filename"
+block_list=0
+blockListJson=$(printf '%s\n' "${blockList[@]}" | jq -R . | jq -s  )
+contentMd5=0;
+sliceMd5=0;
+contentMd5=$(md5sum $dir |awk '{print $1}')
+sliceMd5=$(dd if=$dir bs=$((256 * 1024)) count=1 2>/dev/null|md5sum|awk '{print $1}')
+size=$( wc -c $dir | awk '{print $1}')
+isdir=0
+if (($debug==1));then
+echo -e "${green}isdir: ${isdir} ${NC}" >&2
+echo -e "${green}size: ${size} ${NC}" >&2
+echo -e "${green}path: ${path} ${NC}" >&2 
+echo -e "${green}blockListJson: ${blockListJson} ${NC}" >&2
+fi
+result=$(curl  -c ~/cookie.txt -b a1.txt -s "http://pan.baidu.com/rest/2.0/xpan/file?method=precreate&access_token=${accessToken}" -d "isdir=${isdir}&path=${path}&size=${size}&autoinit=1&rtype=2&content-md5=${contentMd5}&slice-md5=${sliceMd5}&block_list=${blockListJson}" -H "User-Agent: pan.baidu.com" )
+return_type=$(echo $result|jq -r '.return_type')
+
+echo  $return_type;
+echo  $(echo $result|jq -r '.uploadid')
+if [[ $debug == 1 ]];then
+echo -e "${green} $return_type" >&2;
+echo  -e "${green} $(echo $result|jq -r '.uploadid')" >&2
+fi
+}
+
+
+
+
+
+
+download(){
+dir=$1
+isShowDownUrl=$2
+dir1=$(echo "$dir"|sed 's/\/$//g')
+preDir=$(echo $dir1|sed 's/\(.*\)\(\/.*\)/\1/g');
+if [ ! -n "$preDir" ];then
+	preDir=/
+fi
+isdir=$(getDir $preDir | jq  --arg dir $dir '.list[]|select(.path==$dir)|.isdir') ;
+
+if [[ ! -n $isdir ]];then
+	
+echo -e "${green} 文件或目录没有找到! ${dir}" >&2
+return 1
+fi
+
+
+
+if [ $isdir -eq 1 ];then
+downloadFolder $dir 1 
+
+else
+
+fsid=$(getDir $preDir | jq  --arg dir $dir '.list[]|select(.path==$dir)|.fs_id') ;
+dlink=$(getDlink $fsid);
+echo -e "${green}${fsid} ${NC}"
+downloadFile $dlink $dir $isShowDownUrl
+fi
+
+
+}
+
+
+
+
+putFile(){
+
+dir=$1
+path=$2
+
+
+filename=${path##*/}
+localfilename=${dir##*/}
+path=${appName}$path
+path=${path/%\//}
+
+dir=$(echo $dir |  sed 's/\/$//g');
+if [[ -e $dir ]]&&[[ -f $dir ]];then
+
+	if [[ $filename != *.* ]];then
+		path=${path}/${localfilename}
+	fi
+uploadFile $dir $path
+else
+subDir=${dir##*/}
+if [[ $subDir != "." ]] && [[ $subDir != ".." ]];then
+path=$path"/"$subDir
+
+fi
+uploadFolder $dir $path
+fi
+
+}
+
+#=============================================
+
+
+upFileCount=1
+
+uploadFolder(){
+for file in `ls $1`
+
+do
+
+ if [ -d $1"/"$file ]
+
+ then
+
+ uploadFolder $1"/"$file $2"/"$file
+
+ else
+
+
+uploadFile $1"/"$file $2"/"$file
+echo -e "${green} 第 ${upFileCount} 个文件上传成功 $2/${file}"
+let upFileCount+=1
+ fi
+
+done
+
+}
+
+
+#=========================================================
+
+
+uploadFile(){
+dir=$1;
+path=$2
+blockList=()
+uploadid=0
+
+
+getBlockList "$dir"
+if [[ $? != 0 ]];then
+	echo -e "${RED} 分片MD5获取失败!!! ${path}" >&2
+	return 1;
+fi
+
+
+if [[ "${#blockList[@]}" == 0 ]];then
+
+	echo -e "${RED} 分片MD5获取失败! ${path}" >&2
+	return 1;
+fi
+
+preResult=($(anticipatePut $dir $path $blockList))
+
+if [[ "${preResult[0]}" == 2 ]];then
+       echo -e "${green} 文件已经存在云端! ${path}" >&2
+	return 0;
+fi
+uploadid=${preResult[1]};
+
+
+if [[ $debug == 1 ]];then
+echo -e ${green}${#preResult[*]} >&2
+echo -e ${green}${preResult[0]} >&2
+echo -e ${green}${preResult[1]} >&2
+fi
+
+
+if [[ "${#uploadid}" == 0 ]];then
+	 echo -e "${RED} uploadid错误 ! ${path}" >&2
+	return 1;
+fi
+
+
+
+slicePut $dir  $uploadid $path
+if [[ $? != 0 ]];then
+
+        echo -e "${RED} 分片文件上传出错! ${path}" >&2
+	return $errno;
+fi
+
+
+
+createFile $path $dir $blockList $uploadid;
+if [[ $? != 0 ]];then
+        echo -e "${RED} 创建文件上传出错! ${path}" >&2 ;
+	return 1;
+fi
+
+
+
+}
+
+
+
+
+#========================================================
+showDir(){
+dir=$1
+
+#dir=$(echo $dir |  sed 's/\(.*\)\(\/\)$/\1/g');
+echo "远程的目录: $dir"
+listDir=$( getDir $dir | jq  '.list ');
+
+curDir1=$( echo $listDir |jq '. | map(.server_filename)');
+isdirstr=$(echo $listDir | jq  '.| map(.isdir)'| jq -r .[]);
+curDir2=$( echo $curDir1 | jq -r .[] );
+#echo $curDir2;
+
+
+array=(${isdirstr// /})  
+fnames=(${curDir2// /})
+for ((i=0;i<${#fnames[*]};i++))
+do
+	v=${array[$i]}
+   if [[ v -eq 1 ]];then
+	echo -e "${blue}${fnames[$i]} ${NC}" >&2
+    else
+    echo -e "${green}${fnames[$i]} ${NC}" >&2
+fi
+
+done
+   
+
+dir="$dir"
+isend=$(echo $dir |grep -Eho "\/$")
+if [[ ! -n $isend ]];then
+	dir=$dir/
+fi
+echo  $(echo $curDir1 | jq --arg dir $dir '.| map($dir+.)'|jq -r .[] )  >  ~/dataExchange.txt
+
+
+}
+
+createFolder(){
+path=$1
+result=$(curl  -s "https://pan.baidu.com/rest/2.0/xpan/file?method=create&access_token=${accessToken}" -d "path=${path}&isdir=1&rtype=1" -H "User-Agent: pan.baidu.com") 
+errno=$(echo $result|jq -r '.errno')
+if [[ $errno != 0 ]];then
+	echo -e "${RED} 文件夹创建失败!" >&2
+else
+
+	echo -e "${green} 文件夹创建成功!!" >&2
+fi
+#curl  "https://pan.baidu.com/rest/2.0/xpan/file?method=create&access_token=${accessToken}" -d "path=${path}&size=0&isdir=1&rtype=1&uploadid=0&block_list=0" -H "User-Agent: pan.baidu.com"
+
+}
+
+fileManagerurl(){
+opera=$1
+filelist=$2
+ondup=$3
+
+if [[ $debug == 1 ]];then
+echo -e "${green}opera: ${opera}"
+echo -e "${green}filelist: ${filelist}"
+echo -e "${green}ondup: ${ondup}"
+fi
+
+result=$(curl -s "http://pan.baidu.com/rest/2.0/xpan/file?method=filemanager&access_token=${accessToken}&opera=${opera}" -d "filelist=${filelist}&async=1&ondup=${ondup}")
+
+errno=$(echo $result|jq '.errno')
+if [[ $errno != 0 ]];then
+	echo -e "${green} 文件操作出错!";
+	return 1;
+fi
+return 0;
+
+
+}
+
+
+rename(){
+opera=$1
+ondup=$2
+path=$3
+newname=$4
+filelist="[{\""path"\":\""${array[0]}"\",\""newname"\":\""${array[1]}"\"}]" 
+fileManagerurl $opera $filelist $ondup
+
+}
+#====================================
+copyAndMove(){
+opera=$1
+ondup=$2
+path=$3
+dest=$4
+
+newname=${dest##*/}
+if [[ $newname != *.* ]];then
+
+newname=${path##*/}
+else
+
+dest=$(echo $dest|grep -Eho '.*/' | >&2);
+fi
+
+array=($path $dest $newname)
+
+filelist="[{\""path"\":\""${array[0]}"\",\""dest"\":\""${array[1]}"\",\""newname"\":\""${array[2]}"\"}]" 
+
+fileManagerurl $opera $filelist $ondup
+}
+
+delete(){
+opera=$1
+path=$2
+filelist=$(printf '%s\n' "${path[@]}" | jq -R . | jq -s  )
+result=$(curl -s "http://pan.baidu.com/rest/2.0/xpan/file?method=filemanager&access_token=${accessToken}&opera=${opera}" -d "filelist=${filelist}&async=1&ondup=${ondup}")
+
+errno=$(echo $result|jq '.errno')
+if [[ $errno != 0 ]];then
+	echo -e "${green} 文件操作出错!";
+	return 1;
+fi
+
+return 0
+}
+#=======================================
+
+fileManager(){
+opera=$1
+ondup=$2
+	if [[ $# != 3 ]];then
+		echo -e "${green} 参数不正确!!! $3"
+		return 1
+	fi
+	
+	array=(`echo $3|sed "s/,/ /g" `)
+	if [[ "$opera" == "delete" ]];then
+		array=($array)
+	
+		delete $opera $array
+
+echo -e "${green} 操作成功!"
+		return 0;
+	fi
+
+
+	if [[ ${#array[*]} != 2 ]];then
+		echo -e "${green} 参数不正确!用逗号分隔 ${array[*]}"
+		return 1
+	fi
+
+	if [[ "$opera" == "rename" ]];then
+
+		rename $opera $ondup "${array[0]}" "${array[1]}"
+
+echo -e "${green} 操作成功!"
+		return 0;
+	fi
+
+
+	path=${array[0]}
+	dest=${array[1]};
+	copyAndMove $opera $ondup $path $dest
+	
+echo -e "${green} 操作成功!"
+
+}
+createEmptyFile(){
+
+path=$1
+result=$(curl  -s "https://pan.baidu.com/rest/2.0/xpan/file?method=create&access_token=${accessToken}" -d "path=${path}&isdir=0&rtype=1" -H "User-Agent: pan.baidu.com") 
+echo $result|jq
+
+errno=$(echo $result|jq -r '.errno')
+if [[ $errno != 0 ]];then
+	echo -e "${RED} 空文件创建失败!" >&2
+else
+
+	echo -e "${green} 空文件创建成功!!" >&2
+fi
+
+
+
+
+
+}
+
+#=========================================================
+
+function menu {
+	clear
+	echo
+	echo -e "\t\t登陆选择\n"
+	echo -e "\t1. 二维码登陆"
+	echo -e "\t2. 验证码登陆"
+	echo -e "\t3. 密码登陆"
+	echo -e "\t0. 退出\n\n"
+	echo -en "\t\t请输入相应的数字:"
+	read -n 1 option
+}
+
+function qrcodeLogin {
+
+appKey=$1
+secretKey=$2
+qrcode=$( curl -sLc ~/cookie.txt -b a1.txt "https://passport.baidu.com/v2/api/getqrcode?lp=pc&qrloginfrom=pc&gid=ypiver=v3");
+imgurl=$(echo $qrcode | jq .imgurl  | sed 's/"//g');
+sign=$(echo $qrcode | jq .sign | sed 's/"//g');
+curl -o qr.png "https://$imgurl"
+zbarimg --raw qr.png | xargs  qrencode -m 3 -t ANSIUTF8
+
+read -p "扫码之后，按回车继续!" y
+cast=$(curl -sLc ~/cookie.txt -b a1.txt 'https://passport.baidu.com/channel/unicast?tpl=dev&gid=yujiegao&callback=&apiver=v3&channel_id='$sign)
+v=$(echo $cast | jq .channel_v | jq -r |jq .v | sed 's/"//g');
+echo $v
+code=$(curl -sLc ~/cookie.txt -b a1.txt "https://passport.baidu.com/v2/api/bdusslogin?bduss=$v&u=https%253A%252F%252Fopenapi.baidu.com%252Foauth%252F2.0%252Fauthorize%253Fresponse_type%253Dcode%2526client_id%253D$appKey%2526redirect_uri%253Doob%2526scope%253Dbasic%252Cnetdisk%2526display%253Dtv%2526qrcode%253D1&qrcode=1&tpl=dev&apiver=v3&tt=1620136625392&traceid=&time=1620136625&alg=v3&sig=d1kwUzNMVGc4aGRXekhWd21BYmh4bmlibnY5VTF2SU9nL2lDUHg2OWpOWEtEalB6WEtwZEgvV1ZmL2M0dUJDeA%3D%3D&elapsed=34&shaOne=00a8413a841efcc76a027f832b86f0abf4b5f95a" |   grep  -E  'id="Verifier"' | grep  -Eoh  '[[:alnum:]]{32}')
+
+token=$(curl -sLc ~/cookie.txt -b a1.txt "https://openapi.baidu.com/oauth/2.0/token?grant_type=authorization_code&code=$code&client_id=$appKey&client_secret=$secretKey&redirect_uri=oob");
+accessToken=$(echo $token | jq .access_token | sed 's/"//g');
+refreshToken=$(echo $token | jq .refresh_token | sed 's/"//g');
+if [[ ${#accessToken} == 83 ]] && [[ ${#refreshToken} == 83 ]];then
+sed -i "1c refreshToken=$refreshToken" $0
+sed -i "2c accessToken=$accessToken" $0
+else
+	echo -e "${RED} 出错 accessToken:  ${accessToken} " >&2
+	echo -e "${RED}  出错 refreshToken:  ${refreshToken} " >&2
+fi
+	clear 
+	
+}
+
+function verifycodeLogin {
+	clear
+
+	echo -e "${green} 验证码登陆没写"
+}
+
+function passwodLogin {
+	clear
+	echo -e "${green} 密码登陆没写"
+}
+
+function loginOpera(){
+appKey=$1
+secretKey=$2
+while [ 1 ]
+do
+	menu
+	case $option in
+	0) 
+		break;;
+	1) 
+		qrcodeLogin $appKey $secretKey
+		;;
+	2)
+		verifycodeLogin $appKey $secretKey
+		;;
+	3)
+		passwodLogin $appKey $secretKey
+		;;
+	*)
+		clear
+		echo "输入错误，请输入正确的数字";;
+	esac
+	echo -en "\n\n\t\t按任意键继续"
+	read -n 1 line
+done
+clear
+
+
+
+}
+
+
+
+
+#============================================================================
+while getopts "v:l:p:d:m:c:C:D:u:r:hL" arg #选项后面的冒号表示该选项需要参数
+do
+        case $arg in
+             l)
+		 path=$OPTARG
+		showDir $path
+		 ;;
+             u)
+		dir=$( echo $OPTARG|awk -F ',' '{print $1}')
+                path=$( echo $OPTARG|awk -F ',' '{print $2}')
+		if [[ ! -n $dir || ! -n $path ]];then
+			echo 需要传入2个参数,逗号分隔！
+			exit 1
+
+		fi	
+		putFile $dir $path
+		;;
+             d)
+                 path=$OPTARG
+	 download "$path" 0
+		;;
+	v)
+                 path=$OPTARG
+	 download "$path" 1
+		;;
+	c)
+                 path=$OPTARG
+		createEmptyFile $path
+	;;
+	C)
+		path=$OPTARG
+		createFolder $path
+		;;
+	p)
+	fileManager "copy" "newcopy" "$OPTARG"
+	;;
+	m)
+	fileManager "move" "newcopy" "$OPTARG"
+	;;
+	r)
+
+	fileManager "rename" "newcopy" "$OPTARG"
+
+	;;
+	D)
+		
+	fileManager "delete" "0" "$OPTARG"
+	;;
+	L)
+	
+appKey="N9kMqel6E3NflN6UcOLNW1ykpMHb7Xhe"
+secretKey="zGTQlGYtVUbxlNLoB99HK1eG4y4u4EB4"
+loginOpera $appKey $secretKey
+
+	;;
+	h)
+		array=("-L  登录！" "-v 显示文件的下载地址 -v"  "-l 查看目录! -l /gao" "-d 下载文件或目录，到当前目录！-d /gao/aa.txt" "-D 删除文件,逗号分隔多个文件 -D /gao/aa.txt,/gao/bb.txt,/gao/cc.txt" "-u 上传文件或目录! -u ./aa.txt" "-c 创建文件! -c /gao/cc.txt" "-C 创建目录! -C /gao/cc" "-m 移动文件! -m /gao/aa.txt,/gao1/bb.txt" "-p 复制文件! -p /gao/aa.txt,/gao1/bb.txt" "-r 重命名文件!  -r /gao/aa.txt,bb.txt")
+		for((i=0;i<${#array[*]};i++))
+		do
+			
+		echo -e "${green} ${array[i]}"; 
+		done
+	;;
+
+             ?)  #当有不认识的选项的时候arg为?
+            echo "unkonw argument"
+        exit 1
+
+        esac
+done
+
+#====================================================
+
+
+
+
+
