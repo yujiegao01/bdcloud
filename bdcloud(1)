@@ -1,0 +1,35 @@
+
+#shName=$(echo  $BASH_SOURCE  | sed  's/.*\///g' | sed -e 's/\.[[:alnum:]]*//g');
+shName=$(echo  $BASH_SOURCE  | sed  's/.*\///g');
+_pandoc() {
+    local pre cur
+
+    COMPREPLY=()
+    #pre="$3"
+    #cur="$2"
+    pre=${COMP_WORDS[COMP_CWORD-1]}
+    cur=${COMP_WORDS[COMP_CWORD]}
+    complete_options() {
+	
+	echo $cur > ~/temp.txt
+echo $pre >> ~/temp.txt
+        local opts i
+        opts="--login -l -d -p"
+          case $pre in -l|-d)
+	echo "aaaaaaaa -l " >> ~/temp.txt
+	opts=$(sed -n 'p' ~/dataExchange.txt)
+	
+	echo $opts >> ~/temp.txt
+	;;
+
+	esac      
+
+	echo $opts;
+    }
+
+ 
+        COMPREPLY=($( compgen -W "$(complete_options)" -- $cur ) )
+   return 0;
+}
+complete -F _pandoc  $shName
+
