@@ -1,6 +1,6 @@
 #!/usr/bin/bash
-refreshToken='122.a0fd6522291c2aee7a74d365be787470.YH3nFT_Kufyc1KhVW57jrlqPdQssxxwOlKUyxNY.AYULUw'
-accessToken='121.873c6b01840d0a63b01fce6466a3503b.YmwVo_Mpb2sPVOlJtEilmx43bNK1JKsl0Zs32NQ.hsLu5A'
+refreshToken=''
+accessToken=''
 
 #apt-get install -y zbarimg qrencode jq
 
